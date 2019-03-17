@@ -35,10 +35,10 @@
 
     function supportsVoiceInput() {
         return window.SpeechRecognition ||
-               window.webkitSpeechRecognition ||
-               window.mozSpeechRecognition ||
-               window.oSpeechRecognition ||
-               window.msSpeechRecognition;
+            window.webkitSpeechRecognition ||
+            window.mozSpeechRecognition ||
+            window.oSpeechRecognition ||
+            window.msSpeechRecognition;
     }
 
     var supportedFeatures = function () {
@@ -48,12 +48,15 @@
             'exit',
             'runatstartup',
             'filedownload',
-            'sharing',
             'externallinks',
             'sleep',
             //'restart',
             'shutdown'
         ];
+
+        if (navigator.share){
+            features.push('sharing');
+        }
 
         if (appStartInfo.supportsTransparentWindow) {
             features.push('windowtransparency');
@@ -67,11 +70,13 @@
             features.push('sync');
         }
 
+        features.push('youtube');
         features.push('connectsignup');
 
         features.push('soundeffects');
         features.push('displaymode');
         features.push('plugins');
+        features.push('skins');
         features.push('exitmenu');
         features.push('htmlaudioautoplay');
         features.push('htmlvideoautoplay');
@@ -82,10 +87,20 @@
 
         features.push('multiserver');
         features.push('imageanalysis');
-        features.push('remotemedia');
+
+        features.push('remoteaudio');
+        features.push('remotevideo');
+
         features.push('screensaver');
 
         features.push('otherapppromotions');
+        features.push('fileinput');
+
+        features.push('nativeblurayplayback');
+        features.push('nativedvdplayback');
+        features.push('subtitleappearancesettings');
+
+        features.push('displaylanguage');
 
         return features;
     }();
@@ -117,14 +132,9 @@
         shutdown: function () {
             sendCommand('shutdown');
         },
-        appInfo: function () {
+        init: function () {
 
-            return Promise.resolve({
-                appName: appStartInfo.name,
-                appVersion: appStartInfo.version,
-                deviceName: appStartInfo.deviceName,
-                deviceId: appStartInfo.deviceId
-            });
+            return Promise.resolve();
         },
         appName: function () {
             return appStartInfo.name;
@@ -136,7 +146,7 @@
             return appStartInfo.deviceName;
         },
         deviceId: function () {
-            return Promise.resolve(appStartInfo.deviceId);
+            return appStartInfo.deviceId;
         },
 
         moreIcon: 'dots-vert',
@@ -156,6 +166,28 @@
                 }
             };
 
+        },
+
+        setTheme: function (themeSettings) {
+
+            var metaThemeColor = document.querySelector("meta[name=theme-color]");
+            if (metaThemeColor) {
+                metaThemeColor.setAttribute("content", themeSettings.themeColor);
+            }
+        },
+
+        setUserScalable: function (scalable) {
+
+            var att = scalable ?
+                'viewport-fit=cover, width=device-width, initial-scale=1, minimum-scale=1, user-scalable=yes' :
+                'viewport-fit=cover, width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no';
+
+            document.querySelector('meta[name=viewport]').setAttribute('content', att);
+        },
+
+        deviceIconUrl: function () {
+
+            return null;
         }
     };
 });

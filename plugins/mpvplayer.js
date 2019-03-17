@@ -1,5 +1,9 @@
-define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'loading', 'dom', 'require', 'connectionManager'], function (appHost, pluginManager, events, embyRouter, appSettings, loading, dom, require, connectionManager) {
+define(['globalize', 'apphost', 'playbackManager', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'userSettings', 'loading', 'dom', 'require', 'connectionManager'], function (globalize, appHost, playbackManager, pluginManager, events, embyRouter, appSettings, userSettings, loading, dom, require, connectionManager) {
     'use strict';
+
+    function getTextTrackUrl(subtitleStream, serverId) {
+        return playbackManager.getSubtitleUrl(subtitleStream, serverId);
+    }
 
     return function () {
 
@@ -11,9 +15,22 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
         self.priority = -1;
 
         var currentSrc;
-        var playerState = {};
+        var playerState = {
+            volume: parseInt(appSettings.get('mpv-volume') || '100')
+        };
         var ignoreEnded;
         var videoDialog;
+        var currentAspectRatio = 'bestfit';
+
+        document.addEventListener('video-osd-show', function () {
+            //alert("OSD Shown");
+            sendCommand("video_toggle");
+        });
+
+        document.addEventListener('video-osd-hide', function () {
+            //alert("OSD Hidden");
+            sendCommand("video_toggle");
+        });
 
         self.getRoutes = function () {
 
@@ -49,6 +66,11 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
             var files = [];
 
             files.push({
+                lang: 'cs',
+                path: pluginManager.mapPath(self, 'mpvplayer/strings/cs.json')
+            });
+
+            files.push({
                 lang: 'en-us',
                 path: pluginManager.mapPath(self, 'mpvplayer/strings/en-US.json')
             });
@@ -71,6 +93,11 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
             files.push({
                 lang: 'it',
                 path: pluginManager.mapPath(self, 'mpvplayer/strings/it.json')
+            });
+
+            files.push({
+                lang: 'lt-LT',
+                path: pluginManager.mapPath(self, 'mpvplayer/strings/lt-LT.json')
             });
 
             files.push({
@@ -114,63 +141,44 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
 
             var profile = {};
 
-            profile.MaxStreamingBitrate = 100000000;
-            profile.MaxStaticBitrate = 100000000;
+            profile.MaxStreamingBitrate = 200000000;
+            profile.MaxStaticBitrate = 200000000;
             profile.MusicStreamingTranscodingBitrate = 192000;
 
             profile.DirectPlayProfiles = [];
 
-            var apiClient = item && item.ServerId ? connectionManager.getApiClient(item.ServerId) : null;
-            var supportsEmptyContainer = apiClient ? apiClient.isMinServerVersion('3.2.26.0') : false;
-
-            if (supportsEmptyContainer) {
-                // leave container null for all
-                profile.DirectPlayProfiles.push({
-                    Type: 'Video'
-                });
-            }
-
-            // for older servers that don't support leaving container blank
+            // leave container null for all
             profile.DirectPlayProfiles.push({
-                Container: 'm4v,mpegts,ts,3gp,mov,xvid,vob,mkv,wmv,asf,ogm,ogv,m2v,avi,mpg,mpeg,mp4,webm,wtv,iso,m2ts,dvr-ms',
                 Type: 'Video'
             });
 
-            if (supportsEmptyContainer) {
-                // leave container null for all
-                profile.DirectPlayProfiles.push({
-                    Type: 'Audio'
-                });
-            }
-
-            // for older servers that don't support leaving container blank
+            // leave container null for all
             profile.DirectPlayProfiles.push({
-                Container: 'aac,mp3,mpa,wav,wma,mp2,ogg,oga,webma,ape,opus,alac,flac,m4a',
                 Type: 'Audio'
             });
 
             profile.TranscodingProfiles = [];
 
             profile.TranscodingProfiles.push({
-                Container: 'mkv',
+                Container: 'ts',
                 Type: 'Video',
                 AudioCodec: 'ac3,mp3,aac',
-                VideoCodec: 'h264,mpeg2video',
+                VideoCodec: 'h264,mpeg2video,hevc',
                 Context: 'Streaming',
                 Protocol: 'hls',
                 MaxAudioChannels: '6',
                 MinSegments: '1',
-                BreakOnNonKeyFrames: false,
+                BreakOnNonKeyFrames: true,
                 SegmentLength: '3'
             });
 
             profile.TranscodingProfiles.push({
-
                 Container: 'ts',
                 Type: 'Audio',
                 AudioCodec: 'aac',
                 Context: 'Streaming',
                 Protocol: 'hls',
+                BreakOnNonKeyFrames: true,
                 SegmentLength: '3'
             });
 
@@ -194,11 +202,15 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
                 Method: 'External'
             });
             profile.SubtitleProfiles.push({
+                Format: 'ssa',
+                Method: 'External'
+            });
+            profile.SubtitleProfiles.push({
                 Format: 'ass',
                 Method: 'External'
             });
             profile.SubtitleProfiles.push({
-                Format: 'ssa',
+                Format: 'vtt',
                 Method: 'External'
             });
             profile.SubtitleProfiles.push({
@@ -218,6 +230,18 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
                 Method: 'Embed'
             });
             profile.SubtitleProfiles.push({
+                Format: 'dvb_teletext',
+                Method: 'Embed'
+            });
+            profile.SubtitleProfiles.push({
+                Format: 'dvb_subtitle',
+                Method: 'Embed'
+            });
+            profile.SubtitleProfiles.push({
+                Format: 'dvbsub',
+                Method: 'Embed'
+            });
+            profile.SubtitleProfiles.push({
                 Format: 'pgs',
                 Method: 'Embed'
             });
@@ -227,10 +251,6 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
             });
             profile.SubtitleProfiles.push({
                 Format: 'dvdsub',
-                Method: 'Embed'
-            });
-            profile.SubtitleProfiles.push({
-                Format: 'dvbsub',
                 Method: 'Embed'
             });
             profile.SubtitleProfiles.push({
@@ -253,6 +273,10 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
             profile.ResponseProfiles = [];
 
             return Promise.resolve(profile);
+        };
+
+        self.getDirectPlayProtocols = function () {
+            return ['File', 'Http', 'Rtp', 'Rtmp', 'Rtsp', 'Ftp'];
         };
 
         self.currentSrc = function () {
@@ -330,33 +354,79 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
 
         function playInternal(options) {
 
+            var item = options.item;
             var mediaSource = JSON.parse(JSON.stringify(options.mediaSource));
 
             var url = options.url;
 
             ignoreEnded = false;
             currentSrc = url;
+            currentAspectRatio = 'bestfit'
 
             //var isVideo = options.mimeType.toLowerCase('video').indexOf() == 0;
             var isVideo = options.item.MediaType == 'Video';
 
+            for (var i = 0, length = mediaSource.MediaStreams.length; i < length; i++) {
+
+                var track = mediaSource.MediaStreams[i];
+
+                if (track.Type === 'Subtitle') {
+
+                    if (track.DeliveryMethod === 'External') {
+                        track.DeliveryUrl = getTextTrackUrl(track, item.ServerId);
+                    }
+                }
+            }
+
             var enableFullscreen = options.fullscreen !== false;
 
-            // Update the text url in the media source with the full url from the options object
-            mediaSource.MediaStreams.forEach(function (ms) {
-                var textTrack = options.textTracks.filter(function (t) {
-                    return t.index == ms.Index;
+            var subtitleAppearanceSettings = userSettings.getSubtitleAppearanceSettings();
+            var fontSize;
+            switch (subtitleAppearanceSettings.textSize || '') {
 
-                })[0];
+                case 'smaller':
+                    fontSize = 35;
+                    break;
+                case 'small':
+                    fontSize = 45;
+                    break;
+                case 'larger':
+                    fontSize = 75;
+                    break;
+                case 'extralarge':
+                    fontSize = 85;
+                    break;
+                case 'large':
+                    fontSize = 65;
+                    break;
+                default:
+                    break;
+            }
+            var fontFamily;
+            switch (subtitleAppearanceSettings.font || '') {
 
-                if (textTrack) {
-                    ms.DeliveryUrl = textTrack.url;
-                }
-            });
+                case 'smallcaps':
+                case 'typewriter':
+                case 'console':
+                    fontFamily = 'monospace';
+                    break;
+                case 'print':
+                    fontFamily = 'Times New Roman';
+                    break;
+                case 'cursive':
+                    fontFamily = 'cursive';
+                    break;
+                case 'casual':
+                    fontFamily = 'Comic Sans MS';
+                    break;
+                default:
+                    break;
+            }
 
             var requestBody = {
                 path: url,
                 isVideo: isVideo,
+                playMethod: options.playMethod,
                 //item: options.item,
                 mediaSource: mediaSource,
                 startPositionTicks: options.playerStartPositionTicks || 0,
@@ -375,19 +445,28 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
                     dscale: appSettings.get('mpv-dscale'),
                     tscale: appSettings.get('mpv-tscale'),
                     ditherdepth: appSettings.get('mpv-ditherdepth'),
+                    videoStereoMode: appSettings.get('mpv-videostereomode'),
                     openglhq: appSettings.get('mpv-openglhq') === 'true',
                     exclusiveAudio: appSettings.get('mpv-exclusiveaudio') === 'true',
-                    videoSync: appSettings.get('mpv-displaysync') === 'yes' ? 'display-resample' : null,
+                    videoSync: appSettings.get('mpv-videosync') === 'true' ? 'display-resample' : null,
+                    displaySync: appSettings.get('mpv-displaysync') === 'true',
+                    displaySync_Override: appSettings.get('mpv-displaysync_override'),
                     interpolation: appSettings.get('mpv-interpolation') === 'true',
                     correctdownscaling: appSettings.get('mpv-correctdownscaling') === 'true',
                     sigmoidupscaling: appSettings.get('mpv-sigmoidupscaling') === 'true',
                     deband: appSettings.get('mpv-deband') === 'true',
+                    fullscreen: enableFullscreen,
                     //genPts: mediaSource.RunTimeTicks ? false : true,
                     audioDelay: parseInt(appSettings.get('mpv-audiodelay') || '0'),
                     audioDelay2325: parseInt(appSettings.get('mpv-audiodelay2325') || 0),
-                    largeCache: mediaSource.RunTimeTicks == null || options.item.Type === 'Recording' ? true : false
+                    largeCache: mediaSource.RunTimeTicks == null || options.item.Type === 'Recording' ? true : false,
+                    subtitleFontSize: fontSize,
+                    subtitleFontFamily: fontFamily,
+                    volume: playerState.volume || 100
                 }
             };
+
+            playerState.volume = requestBody.playerOptions.volume;
 
             return sendCommand('play', requestBody).then(function () {
 
@@ -447,12 +526,6 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
             return seekRelative(offsetMs);
         };
 
-        self.enableMediaProbe = function () {
-
-            // We expect to direct play everything with mpv
-            return false;
-        };
-
         self.duration = function (val) {
 
             if (playerState.durationTicks == null) {
@@ -471,12 +544,16 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
                 onEnded();
 
                 if (destroyPlayer) {
-                    self.destroy();
+                    destroyInternal(false);
                 }
             });
         };
 
-        self.destroy = function () {
+        function destroyInternal(destroyCommand) {
+
+            if (destroyCommand) {
+                sendCommand('stopdestroy');
+            }
 
             embyRouter.setTransparency('none');
 
@@ -487,6 +564,10 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
 
                 dlg.parentNode.removeChild(dlg);
             }
+        }
+
+        self.destroy = function () {
+            destroyInternal(true);
         };
 
         self.playPause = function () {
@@ -512,6 +593,14 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
         self.paused = function () {
 
             return playerState.isPaused || false;
+        };
+
+        self.volumeUp = function (val) {
+            sendCommand('volumeUp').then(onVolumeChange);
+        };
+
+        self.volumeDown = function (val) {
+            sendCommand('volumeDown').then(onVolumeChange);
         };
 
         self.volume = function (val) {
@@ -551,6 +640,80 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
             return sendCommand('stats');
         };
 
+        function mapRange(range) {
+            var offset;
+            //var currentPlayOptions = instance._currentPlayOptions;
+            //if (currentPlayOptions) {
+            //    offset = currentPlayOptions.transcodingOffsetTicks;
+            //}
+
+            offset = offset || 0;
+
+            return {
+                start: (range.start * 10000000) + offset,
+                end: (range.end * 10000000) + offset
+            };
+        }
+
+        var supportedFeatures;
+        function getSupportedFeatures() {
+
+            var list = [];
+
+            list.push('SetAspectRatio');
+
+            return list;
+        }
+
+        self.supports = function (feature) {
+
+            if (!supportedFeatures) {
+                supportedFeatures = getSupportedFeatures();
+            }
+
+            return supportedFeatures.indexOf(feature) !== -1;
+        };
+
+        self.setAspectRatio = function (val) {
+
+            currentAspectRatio = val;
+            sendCommand('aspectratio?val=' + val);
+        };
+
+        self.getAspectRatio = function () {
+
+            return currentAspectRatio;
+        };
+
+        self.getSupportedAspectRatios = function () {
+
+            return [
+                { name: '4:3', id: '4_3' },
+                { name: '16:9', id: '16_9' },
+                { name: globalize.translate('sharedcomponents#Auto'), id: 'bestfit' },
+                //{ name: globalize.translate('sharedcomponents#Fill'), id: 'fill' },
+                { name: globalize.translate('sharedcomponents#Original'), id: 'original' }
+            ];
+        };
+
+        self.getBufferedRanges = function () {
+
+            var cacheState = playerState.demuxerCacheState;
+            if (cacheState) {
+                var ranges = cacheState['seekable-ranges'];
+
+                if (ranges) {
+                    return ranges.map(mapRange);
+                }
+            }
+            return [];
+        };
+
+        self.seekable = function () {
+
+            return true;
+        };
+
         var timeUpdateInterval;
         function startTimeUpdateInterval() {
             stopTimeUpdateInterval();
@@ -580,6 +743,8 @@ define(['apphost', 'pluginManager', 'events', 'embyRouter', 'appSettings', 'load
         }
 
         function onVolumeChange() {
+
+            appSettings.set('mpv-volume', self.volume());
             events.trigger(self, 'volumechange');
         }
 

@@ -8,7 +8,6 @@ var mpvPath;
 var playMediaSource;
 var playMediaType;
 var playerStatus;
-var externalSubIndexes;
 var fadeTimeout;
 var currentVolume;
 var currentPlayResolve;
@@ -18,23 +17,6 @@ function alert(text) {
     require('electron').dialog.showMessageBox(mainWindowRef, {
         message: text.toString(),
         buttons: ['ok']
-    });
-}
-
-function download(url, dest) {
-    return new Promise(function (resolve, reject) {
-        var http = url.toLowerCase().indexOf('https:') == -1 ? require('http') : require('https');
-        var fs = require('fs');
-        var file = fs.createWriteStream(dest);
-        var request = http.get(url, function (response) {
-            response.pipe(file);
-            file.on('finish', function () {
-                file.close(resolve);  // close() is async, call cb after close completes.
-            });
-        }).on('error', function (err) { // Handle errors
-            fs.unlink(dest); // Delete the file async. (But we don't check the result)
-            reject();
-        });
     });
 }
 
@@ -73,6 +55,35 @@ function set_position(data) {
     mpvPlayer.goToPosition(Math.round(data / 10000000));
 }
 
+function setAspectRatio(player, value) {
+
+    switch (value) {
+        case "4_3":
+            player.setProperty("video-unscaled", "no");
+            player.setProperty("video-aspect", "4:3");
+            break;
+        case "16_9":
+            player.setProperty("video-unscaled", "no");
+            player.setProperty("video-aspect", "16:9");
+            break;
+        case "bestfit":
+            player.setProperty("video-unscaled", "no");
+            player.setProperty("video-aspect", "-1");
+            break;
+        case "fill":
+            //var size = player.getProperty("android-surface-size");
+            //var aspect = parseFloat(size.split("x")[0]) / parseFloat(size.split("x")[1]);
+            //player.setProperty("video-unscaled", "no");
+            //player.setProperty("video-aspect", aspect);
+
+            break;
+        case "original":
+            player.setProperty("video-unscaled", "downscale-big");
+            player.setProperty("video-aspect", "-1");
+            break;
+    }
+}
+
 function set_volume(data) {
     mpvPlayer.volume(data);
 }
@@ -85,6 +96,13 @@ function unmute() {
     mpvPlayer.unmute();
 }
 
+function video_toggle() {
+    var isLinux = require('is-linux');
+    if (isLinux()) {
+        mpvPlayer.cycleProperty("video");
+    }
+}
+
 function set_audiostream(player, index) {
 
     var audioIndex = 0;
@@ -92,7 +110,7 @@ function set_audiostream(player, index) {
     var streams = playMediaSource.MediaStreams || [];
     for (i = 0, length = streams.length; i < length; i++) {
         stream = streams[i];
-        if (stream.Type === 'Audio') {
+        if (stream.Type == 'Audio') {
             audioIndex++;
             if (stream.Index == index) {
                 break;
@@ -112,33 +130,43 @@ function set_subtitlestream(player, index) {
         var streams = playMediaSource.MediaStreams || [];
         for (i = 0, length = streams.length; i < length; i++) {
             stream = streams[i];
-            if (stream.Type === 'Subtitle') {
+            if (stream.Type == 'Subtitle') {
                 subIndex++;
 
                 if (stream.Index == index) {
-                    if (stream.DeliveryMethod === 'External') {
-                        if (stream.Index in externalSubIndexes) {
-                            player.setProperty("sid", externalSubIndexes[stream.Index]);
-                        } else {
-                            var os = require('os');
-                            var subtitlefile = os.tmpdir() + "/" + "subtitle" + new Date().getTime() + "." + stream.Codec.toLowerCase();
-                            download(stream.DeliveryUrl, subtitlefile).then(() => {
-                                player.addSubtitles(subtitlefile, "select", stream.DisplayTitle, stream.Language);
-                                player.getProperty('sid').then(function (sid) {
-                                    externalSubIndexes[stream.Index] = sid;
-                                }).catch(() => {
-                                    console.log("Failed to download " + stream.DeliveryUrl);
-                                });
-                            });
-                        }
+                    if (stream.DeliveryMethod == 'External') {
+
+                        player.addSubtitles(stream.DeliveryUrl, "cached", stream.DisplayTitle, stream.Language);
                     } else {
                         player.setProperty("sid", subIndex);
+                        if (stream.Codec == "dvb_teletext") {
+                            setDvbTeletextPage(player, stream);
+                        }
                     }
 
                     break;
                 }
             }
         }
+    }
+}
+
+function setDvbTeletextPage(player, stream) {
+    
+    // cases to handle:
+    // 00000000: 0001 0001 10
+    // 00000000: 1088 0888
+    // 00000000: 1088
+    // If the stream contains multiple languages, just use the first
+
+    var extradata = stream.Extradata;
+            
+    if (extradata && extradata.length > 13) {
+        var pageNumber = parseInt(extradata.substring(11, 14));
+        if (pageNumber < 100) {
+            pageNumber += 800;
+        }
+        player.setProperty("teletext-page", pageNumber);
     }
 }
 
@@ -150,15 +178,37 @@ function getMpvOptions(options, mediaType, mediaSource) {
         list.push('--profile=opengl-hq');
     }
 
-    list.push('--hwdec=' + (options.hwdec || 'no'));
+    var isRpi = require('detect-rpi');
+    if (isRpi()) {
+        list.push('--fs');
+    }
 
-    list.push('--deinterlace=' + (options.deinterlace || 'auto'));
+    list.push('--hwdec=' + (options.hwdec || 'auto'));
+
+    if (options.deinterlace == 'yes') {
+        list.push('--deinterlace=' + (options.deinterlace || 'auto'));
+    }
 
     list.push('--video-output-levels=' + (options.videoOutputLevels || 'auto'));
 
     if (options.videoSync) {
 
         list.push('--video-sync=' + (options.videoSync));
+    }
+
+    //limitation that until we can pass the Windows monitor# (not the display name that MPV returns), is limited to Primary monitor
+    if (options.displaySync) {
+        var winPosition = mainWindowRef.getPosition();
+        var winBounds = mainWindowRef.getBounds();
+        var displayParams_active = require('electron').screen.getDisplayNearestPoint({ x: winPosition[0], y: winPosition[1] })
+
+        //rough test for fullscreen on playback start
+        if ((winBounds.width == displayParams_active.size.width) && (displayParams_active.size.height == winBounds.height)) {
+            var rf_rate = ((options.displaySync_Override != '') ? ',refreshrate-rates="' + (options.displaySync_Override) + '"' : '');
+            var rf_theme = ((options.fullscreen) ? '' : ',refreshrate-theme=true');
+
+            list.push('--script-opts=refreshrate-enabled=true' + rf_rate + rf_theme);
+        }
     }
 
     if (options.scale) {
@@ -204,6 +254,21 @@ function getMpvOptions(options, mediaType, mediaSource) {
     if (options.ditherdepth) {
 
         list.push('--dither-depth=' + (options.ditherdepth));
+    }
+
+    if (options.videoStereoMode) {
+
+        list.push('--video-stereo-mode=' + options.videoStereoMode);
+    }
+
+    if (options.subtitleFontFamily) {
+
+        list.push('--sub-font=' + options.subtitleFontFamily);
+    }
+
+    if (options.subtitleFontSize) {
+
+        list.push('--sub-font-size=' + options.subtitleFontSize);
     }
 
     var audioOptions = getMpvAudioOptions(options, mediaType);
@@ -258,7 +323,7 @@ function getMpvAudioOptions(options, mediaType) {
         audioChannels = '5.1,stereo';
     }
     else if (audioChannels === '7.1') {
-        audioChannels = '7.1,5.1,stereo';
+        audioChannels = '7.1,stereo';
     }
 
     var audioChannelsFilter = getAudioChannelsFilter(options, mediaType);
@@ -268,7 +333,7 @@ function getMpvAudioOptions(options, mediaType) {
 
     if (audioFilters.length) {
 
-        list.push('--af=' + (audioFilters.join(',')));
+        list.push('--af=lavfi=[' + (audioFilters.join(',')) + ']');
     }
 
     list.push('--audio-channels=' + (audioChannels));
@@ -281,8 +346,6 @@ function getMpvAudioOptions(options, mediaType) {
 
     if (options.exclusiveAudio && mediaType === 'Video') {
         list.push('--audio-exclusive=yes');
-    } else {
-        list.push('--audio-exclusive=no');
     }
 
     return list;
@@ -299,15 +362,16 @@ function getAudioChannelsFilter(options, mediaType) {
         }
     }
 
+    //there's also a surround filter but haven't found good documentation to implement -PMR 20171225
     if (enableFilter) {
-        var audioChannels = options.audioChannels || 'auto-safe';
+        var audioChannels = options.audioChannels || '';
         if (audioChannels === '5.1') {
             //return 'channels=6';
-            return 'channels=6:[0-0,0-1,0-2,0-3,0-4,0-5]';
+            return 'pan=5.1|FL=FL|BL=FL|FR=FR|BR=FR|FC<0.5*FL + 0.5*FR';
         }
         else if (audioChannels === '7.1') {
             //return 'channels=8';
-            return 'channels=8:[0-0,0-1,0-2,0-3,0-4,0-5,0-6,0-7]';
+            return 'pan=7.1|FL=FL|SL=FL|BL=FL|FR=FR|SR=FR|BR=FR|FC<0.5*FL + 0.5*FR';
         }
     }
 
@@ -362,7 +426,6 @@ function cleanup() {
     playMediaSource = null;
     playMediaType = null;
     playerStatus = null;
-    externalSubIndexes = null;
 }
 
 function getReturnJson(positionTicks) {
@@ -370,6 +433,7 @@ function getReturnJson(positionTicks) {
     if (playerStatus.pause) {
         playState = "paused";
     }
+
     if (playerStatus['idle-active']) {
         playState = "idle";
     }
@@ -379,7 +443,8 @@ function getReturnJson(positionTicks) {
         isMuted: playerStatus.mute || false,
         volume: currentVolume || playerStatus.volume || 100,
         positionTicks: positionTicks || timeposition,
-        playstate: playState
+        playstate: playState,
+        demuxerCacheState: playerStatus['demuxer-cache-state']
     }
 
     if (playerStatus.duration) {
@@ -531,6 +596,14 @@ function getVideoStats(player) {
             value: getDroppedFrames(responses)
         });
 
+        var winPosition = mainWindowRef.getPosition();
+        var displayParams = require('electron').screen.getDisplayNearestPoint({ x: winPosition[0], y: winPosition[1] })
+
+        stats.push({
+            label: 'Display Fullscreen Resolution:',
+            value: displayParams.size.width + ' x ' + displayParams.size.height
+        });
+
         if (videoParams.w && videoParams.h) {
             stats.push({
                 label: 'Video resolution:',
@@ -602,7 +675,7 @@ function getMediaStats(player) {
 
         var stats = [];
 
-        for (var i = 0, length = properties.length ; i < length; i++) {
+        for (var i = 0, length = properties.length; i < length; i++) {
 
             var name = properties[i].name;
 
@@ -652,11 +725,12 @@ function processRequest(request, body) {
                 createMpv(data.playerOptions, data.mediaType, playMediaSource);
                 playMediaType = data.mediaType;
 
-                externalSubIndexes = {};
                 var startPositionTicks = data["startPositionTicks"];
 
+                mpvPlayer.volume(data.playerOptions.volume || 100);
+
                 play(mpvPlayer, data.path).then(() => {
-                    if (playMediaSource.DefaultAudioStreamIndex != null) {
+                    if (playMediaSource.DefaultAudioStreamIndex != null && data.playMethod != 'Transcode') {
                         set_audiostream(mpvPlayer, playMediaSource.DefaultAudioStreamIndex);
                     }
 
@@ -730,9 +804,22 @@ function processRequest(request, body) {
                 pause();
                 getReturnJson().then(resolve);
                 break;
+            case 'volumeup':
+                set_volume(Math.min(100, (currentVolume || playerStatus.volume || 100) + 2));
+                getReturnJson().then(resolve);
+                break;
+            case 'volumedown':
+                set_volume(Math.max(1, (currentVolume || playerStatus.volume || 100) - 2));
+                getReturnJson().then(resolve);
+                break;
             case 'volume':
                 var data = url_parts.query["val"];
                 set_volume(data);
+                getReturnJson().then(resolve);
+                break;
+            case 'aspectratio':
+                var data = url_parts.query["val"];
+                setAspectRatio(mpvPlayer, data);
                 getReturnJson().then(resolve);
                 break;
             case 'mute':
@@ -751,6 +838,10 @@ function processRequest(request, body) {
             case 'setsubtitlestreamindex':
                 var data = url_parts.query["index"];
                 set_subtitlestream(mpvPlayer, data);
+                getReturnJson().then(resolve);
+                break;
+            case 'video_toggle':
+                video_toggle();
                 getReturnJson().then(resolve);
                 break;
             default:
@@ -801,6 +892,8 @@ function createMpv(options, mediaType, mediaSource) {
 
     mpvOptions.push('--wid=' + playerWindowId);
     mpvOptions.push('--no-osc');
+    mpvOptions.push('--no-input-cursor');
+    mpvOptions.push('--input-vo-keyboard=no');
 
     var mpvInitOptions = {
         "debug": false
@@ -824,6 +917,7 @@ function createMpv(options, mediaType, mediaSource) {
 
     mpvPlayer.observeProperty('idle-active', 13);
     mpvPlayer.observeProperty('demuxer-cache-time', 14);
+    mpvPlayer.observeProperty('demuxer-cache-state', 15);
 
     mpvPlayer.on('timeposition', onMpvTimePosition);
     mpvPlayer.on('started', onMpvStarted);

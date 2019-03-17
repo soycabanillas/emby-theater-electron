@@ -1,11 +1,13 @@
 {
-    "LabelUpmixAudioForHelp": "Upmix audio to utilize all speaker channels.",
-    "EnableExclusiveAudioModeHelp": "Enable exclusive output mode. In this mode, the system is usually locked out, and only Emby will be able to output audio.",
+    "UserRefreshRate": "Preferred Refresh Rates",
+    "UserRefreshRateHelp": "Add Refresh Rates in the order of preference and separate with semicolon (e.g. 50;60;23)",
+    "EnableVideoDisplaySyncingHelp": "Resample audio to match the video. This mode will also try to adjust audio speed to compensate for other drift. (This means it will play the audio at a different speed every once in a while to reduce the A\/V difference.)",
     "LabelOutputRange": "Output range:",
     "LabelHardwareAccelerationMode": "Hardware acceleration mode:",
     "Auto": "Auto",
     "None": "None",
-    "ChangeRefreshRate": "Change monitor refresh rate to match video",
+    "ChangeRefreshRate": "Change display refresh rate to match video",
+    "ChangeRefreshRateHelp": "Changes the primary display refresh rate to closer align with the currently playing video stream. Reportedly works better when Video Display Sync is enabled as well.",
     "LabelSpeakerLayout": "Speaker layout:",
     "Stereo": "Stereo",
     "Quadraphonic": "Quadraphonic",
@@ -13,6 +15,7 @@
     "LabelDynamicRangeCompression": "Dynamic range compression:",
     "LabelEnableAudioPassthroughFor": "Enable audio passthrough for:",
     "LabelUpmixAudioFor": "Upmix audio channels for:",
+    "LabelUpmixAudioForHelp": "Up-mix audio to utilise all speaker channels.",
     "EnableDeinterlacing": "Enable deinterlacing",
     "EnableOpenGlHq": "Enable OpenGL high quality profile",
     "EnableVideoDisplaySyncing": "Enable video display syncing",
@@ -37,5 +40,8 @@
     "DefaultAudioDelay": "Default audio delay:",
     "DefaultAudioDelayHelp": "Audio delay in milliseconds.",
     "AudioDelay2325": "Audio delay (23-25 fps):",
-    "AudioDelay2325Help": "Audio delay in milliseconds for videos with framerates from 23-25 fps."
+    "AudioDelay2325Help": "Audio delay in milliseconds for videos with framerates from 23-25 fps.",
+    "EnableExclusiveAudioModeHelp": "Enable exclusive output mode. In this mode, the system is usually locked out and only Emby will be able to output audio.",
+    "ThreeDMode": "3D conversion mode:",
+    "MonoConvertTo2D": "mono (convert to 2D)"
 }

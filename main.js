@@ -3,17 +3,21 @@
     var electron = require('electron');
     var app = electron.app;  // Module to control application life.
     var BrowserWindow = electron.BrowserWindow;  // Module to create native browser window.
+    var BrowserView = electron.BrowserView;  // Module to create native browser window.
 
     // Keep a global reference of the window object, if you don't, the window will
     // be closed automatically when the JavaScript object is garbage collected.
     var mainWindow = null;
-    var playerWindow = null;
     var hasAppLoaded = false;
 
     var enableDevTools = false;
     var enableDevToolsOnStartup = false;
     var initialShowEventsComplete = false;
+    var previousBounds;
+    var cecProcess;
 
+    var useTrueFullScreen = require('is-linux')();
+    useTrueFullScreen = true;
     // Quit when all windows are closed.
     app.on('window-all-closed', function () {
         // On OS X it is common for applications and their menu bar
@@ -23,16 +27,18 @@
         }
     });
 
-    function onWindowMoved() {
+    function getWebContents() {
+        var win = mainWindow;
+        if (win) {
+            return win.webContents;
+        }
 
-        mainWindow.webContents.executeJavaScript('window.dispatchEvent(new CustomEvent("move", {}));');
-        var winPosition = mainWindow.getPosition();
-        playerWindow.setPosition(winPosition[0], winPosition[1]);
+        return null;
     }
 
-    function onWindowResize() {
-        var winSize = mainWindow.getSize();
-        playerWindow.setSize(winSize[0], winSize[1]);
+    function onWindowMoved() {
+
+        getWebContents().executeJavaScript('window.dispatchEvent(new CustomEvent("move", {}));');
     }
 
     var currentWindowState = 'Normal';
@@ -66,8 +72,20 @@
                 mainWindow.restore();
             }
 
-            mainWindow.setFullScreen(true);
+            if (useTrueFullScreen) {
+                mainWindow.setFullScreen(true);
+            }
+
             mainWindow.setAlwaysOnTop(true);
+            mainWindow.focus();
+
+            if (!useTrueFullScreen) {
+                var bounds = mainWindow.getBounds();
+                previousBounds = bounds;
+                var currentDisplay = electron.screen.getDisplayMatching(bounds);
+                mainWindow.setBounds(currentDisplay.bounds);
+                onEnterFullscreen();
+            }
 
         } else {
 
@@ -77,8 +95,12 @@
             }
 
             else if (previousState == "Fullscreen") {
-                setSize = true;
-                mainWindow.setFullScreen(false);
+                if (useTrueFullScreen) {
+                    mainWindow.setFullScreen(false);
+                } else {
+                    setSize = true;
+                    onLeaveFullscreen();
+                }
             }
 
             else if (previousState == "Maximized") {
@@ -86,8 +108,13 @@
             }
 
             if (setSize) {
-                mainWindow.setSize(1280, 720);
-                mainWindow.center();
+                var bounds = previousBounds;
+                if (bounds) {
+                    mainWindow.setBounds(bounds);
+                } else {
+                    mainWindow.setSize(1280, 720);
+                    mainWindow.center();
+                }
             }
             mainWindow.setAlwaysOnTop(false);
         }
@@ -96,11 +123,10 @@
     function onWindowStateChanged(state) {
 
         currentWindowState = state;
-        mainWindow.webContents.executeJavaScript('document.windowState="' + state + '";document.dispatchEvent(new CustomEvent("windowstatechanged", {detail:{windowState:"' + state + '"}}));');
+        getWebContents().executeJavaScript('document.windowState="' + state + '";document.dispatchEvent(new CustomEvent("windowstatechanged", {detail:{windowState:"' + state + '"}}));');
     }
 
     function onMinimize() {
-        playerWindow.minimize();
         onWindowStateChanged('Minimized');
     }
 
@@ -113,8 +139,6 @@
         } else {
             onWindowStateChanged('Normal');
         }
-
-        playerWindow.restore();
     }
 
     function onMaximize() {
@@ -125,8 +149,8 @@
         onWindowStateChanged('Fullscreen');
 
         if (initialShowEventsComplete) {
-            //playerWindow.setFullScreen(true);
             mainWindow.setMovable(false);
+            mainWindow.setResizable(false);
         }
     }
 
@@ -135,8 +159,8 @@
         onWindowStateChanged('Normal');
 
         if (initialShowEventsComplete) {
-            playerWindow.setFullScreen(false);
             mainWindow.setMovable(true);
+            mainWindow.setResizable(true);
         }
     }
 
@@ -187,15 +211,6 @@
         });
     }
 
-    function setMainWindowResizable(resizable) {
-
-        try {
-            mainWindow.setResizable(resizable);
-        } catch (err) {
-            console.log('Error in setResizable:' + err);
-        }
-    }
-
     var isTransparencyRequired = false;
     var windowStateOnLoad;
     function registerAppHost() {
@@ -214,16 +229,13 @@
 
                 case 'windowstate-Normal':
 
-                    setMainWindowResizable(!isTransparencyRequired);
                     setWindowState('Normal');
 
                     break;
                 case 'windowstate-Maximized':
-                    setMainWindowResizable(false);
                     setWindowState('Maximized');
                     break;
                 case 'windowstate-Fullscreen':
-                    setMainWindowResizable(false);
                     setWindowState('Fullscreen');
                     break;
                 case 'windowstate-Minimized':
@@ -255,11 +267,9 @@
                     return;
                 case 'video-on':
                     isTransparencyRequired = true;
-                    setMainWindowResizable(false);
                     break;
                 case 'video-off':
                     isTransparencyRequired = false;
-                    setMainWindowResizable(true);
                     break;
                 case 'loaded':
 
@@ -286,7 +296,7 @@
         //globalShortcut.register('mediaplaypause', function () {
         //});
 
-        sendJavascript('window.PlayerWindowId="' + getWindowId(playerWindow) + '";');
+        sendJavascript('window.PlayerWindowId="' + getWindowId(mainWindow) + '";');
     }
 
     var processes = {};
@@ -384,6 +394,31 @@
         });
     }
 
+    function registerWakeOnLan() {
+
+        var protocol = electron.protocol;
+        var customProtocol = 'electronwakeonlan';
+        var wakeonlan = require('./wakeonlan/wakeonlan-native');
+
+        protocol.registerStringProtocol(customProtocol, function (request, callback) {
+
+            // Add 3 to account for ://
+            var url = request.url.substr(customProtocol.length + 3).split('?')[0];
+
+            switch (url) {
+
+                case 'wakeserver':
+                    var mac = request.url.split('=')[1].split('&')[0];
+                    var options = { port: request.url.split('=')[2] };
+                    wakeonlan.wake(mac, options, callback);
+                    break;
+                default:
+                    callback("");
+                    break;
+            }
+        });
+    }
+
     function alert(text) {
         electron.dialog.showMessageBox(mainWindow, {
             message: text.toString(),
@@ -436,6 +471,7 @@
                         paths: {
                             apphost: customFileProtocol + '://apphost',
                             shell: customFileProtocol + '://shell',
+                            wakeonlan: customFileProtocol + '://wakeonlan/wakeonlan',
                             serverdiscovery: customFileProtocol + '://serverdiscovery/serverdiscovery',
                             fullscreenmanager: 'file://' + replaceAll(path.normalize(topDirectory + '/fullscreenmanager.js'), '\\', '/'),
                             filesystem: customFileProtocol + '://filesystem'
@@ -482,12 +518,9 @@
     function sendJavascript(script) {
 
         // Add some null checks to handle attempts to send JS when the process is closing or has closed
-        var win = mainWindow;
-        if (win) {
-            var web = win.webContents;
-            if (web) {
-                web.executeJavaScript(script);
-            }
+        var web = getWebContents();
+        if (web) {
+            web.executeJavaScript(script);
         }
     }
 
@@ -507,7 +540,7 @@
         //    case APPCOMMAND_MEDIA_NEXTTRACK        : return "media-nexttrack";
         //    case APPCOMMAND_MEDIA_PREVIOUSTRACK    : return "media-previoustrack";
         //    case APPCOMMAND_MEDIA_STOP             : return "media-stop";
-        //    case APPCOMMAND_MEDIA_PLAY_PAUSE       : return "media-play_pause";
+        //    case APPCOMMAND_MEDIA_PLAY_PAUSE       : return "media-play-pause";
         //    case APPCOMMAND_LAUNCH_MAIL            : return "launch-mail";
         //    case APPCOMMAND_LAUNCH_MEDIA_SELECT    : return "launch-media-select";
         //    case APPCOMMAND_LAUNCH_APP1            : return "launch-app1";
@@ -558,13 +591,13 @@
         switch (cmd) {
 
             case 'browser-backward':
-                if (mainWindow.webContents.canGoBack()) {
-                    mainWindow.webContents.goBack();
+                if (getWebContents().canGoBack()) {
+                    getWebContents().goBack();
                 }
                 break;
             case 'browser-forward':
-                if (mainWindow.webContents.canGoForward()) {
-                    mainWindow.webContents.goForward();
+                if (getWebContents().canGoForward()) {
+                    getWebContents().goForward();
                 }
                 break;
             case 'browser-stop':
@@ -618,7 +651,7 @@
             case 'media-rewind':
                 sendCommand("rewind");
                 break;
-            case 'media-play_pause':
+            case 'media-play-pause':
                 sendCommand("playpause");
                 break;
             case 'media-channel-up':
@@ -682,11 +715,14 @@
             require("fs").writeFileSync(windowStatePath, JSON.stringify(data));
         }
 
-        mainWindow.webContents.executeJavaScript('AppCloseHelper.onClosing();');
+        getWebContents().executeJavaScript('AppCloseHelper.onClosing();');
 
         // Unregister all shortcuts.
         electron.globalShortcut.unregisterAll();
-        closeWindow(playerWindow);
+
+        if (cecProcess) {
+            cecProcess.kill();
+        }
 
         app.quit();
     }
@@ -705,7 +741,7 @@
             index++;
         }
 
-        result.cecExePath = commandLineArguments[index];
+        result.cecExePath = commandLineArguments[index] || 'cec-client';
         index++;
 
         result.mpvPath = commandLineArguments[index];
@@ -739,7 +775,7 @@
                 cecExePath: cecExePath,
                 cecEmitter: cecEmitter
             };
-            cec.init(cecOpts);
+            cecProcess = cec.init(cecOpts);
 
             cecEmitter.on("receive-cmd", onCecCommand);
 
@@ -772,7 +808,7 @@
     function initPlaybackHandler(mpvPath) {
 
         var playbackhandler = require('./playbackhandler/playbackhandler');
-        playbackhandler.initialize(getWindowId(playerWindow), mpvPath);
+        playbackhandler.initialize(getWindowId(mainWindow), mpvPath);
         playbackhandler.registerMediaPlayerProtocol(electron.protocol, mainWindow);
     }
 
@@ -785,16 +821,6 @@
         windowShowCount++;
         if (windowShowCount == 2) {
 
-            mainWindow.setFullScreen(true);
-
-            if (!fullscreenOnShow) {
-                // hack alert. in electron 1.4 under windows, the app starts up black. changing window state seems to resolve it.
-                mainWindow.setFullScreen(false);
-            }
-
-            fullscreenOnShow = false;
-
-            mainWindow.center();
             mainWindow.focus();
             initialShowEventsComplete = true;
         }
@@ -803,10 +829,6 @@
     app.on('quit', function () {
         closeWindow(mainWindow);
     });
-
-    function onPlayerWindowRestore() {
-        mainWindow.focus();
-    }
 
     // This method will be called when Electron has finished
     // initialization and is ready to create browser windows.
@@ -824,14 +846,14 @@
         }
 
         var windowOptions = {
-            transparent: false, //supportsTransparency,
+            transparent: true, //supportsTransparency,
             frame: false,
-            resizable: false,
+            resizable: true,
             title: 'Emby Theater',
             minWidth: 720,
             minHeight: 480,
             //alwaysOnTop: true,
-            skipTaskbar: isWindows() ? false : true,
+            //skipTaskbar: isWindows() ? false : true,
 
             //show: false,
             backgroundColor: '#00000000',
@@ -848,7 +870,6 @@
                 allowDisplayingInsecureContent: true,
                 allowRunningInsecureContent: true,
                 experimentalFeatures: false,
-                blinkFeatures: 'CSSOMSmoothScroll',
                 devTools: enableDevTools
             },
 
@@ -862,13 +883,6 @@
             windowOptions.y = previousWindowInfo.y;
         }
 
-        playerWindow = new BrowserWindow(windowOptions);
-
-        windowOptions.backgroundColor = '#00000000';
-        windowOptions.parent = playerWindow;
-        windowOptions.transparent = true;
-        windowOptions.resizable = true;
-        windowOptions.skipTaskbar = false;
         // Create the browser window.
 
         loadStartInfo().then(function () {
@@ -879,7 +893,7 @@
                 mainWindow.openDevTools();
             }
 
-            mainWindow.webContents.on('dom-ready', setStartInfo);
+            getWebContents().on('dom-ready', setStartInfo);
 
             var url = getAppUrl();
 
@@ -890,6 +904,7 @@
             registerAppHost();
             registerFileSystem();
             registerServerdiscovery();
+            registerWakeOnLan();
 
             // and load the index.html of the app.
             mainWindow.loadURL(url);
@@ -904,14 +919,7 @@
             mainWindow.on("leave-full-screen", onLeaveFullscreen);
             mainWindow.on("restore", onRestore);
             mainWindow.on("unmaximize", onUnMaximize);
-            mainWindow.on("resize", onWindowResize);
 
-            playerWindow.on("restore", onPlayerWindowRestore);
-            playerWindow.on("enter-full-screen", onPlayerWindowRestore);
-            playerWindow.on("maximize", onPlayerWindowRestore);
-            playerWindow.on("focus", onPlayerWindowRestore);
-
-            playerWindow.on("show", onWindowShow);
             mainWindow.on("show", onWindowShow);
 
             // Only the main window should be set to full screen.
@@ -921,12 +929,17 @@
                 fullscreenOnShow = true;
             }
 
-            playerWindow.show();
             mainWindow.show();
 
             initCec();
 
             initPlaybackHandler(commandLineOptions.mpvPath);
+
+            var isRpi = require('detect-rpi');
+            if (isRpi()) {
+                mainWindow.setFullScreen(true);
+                mainWindow.setAlwaysOnTop(true);
+            }
         });
     });
 })();

@@ -10,6 +10,7 @@
 const fs = require("fs");
 const child_process = require("child_process");
 const parseCmd = require("./command-map");
+const os = require("os");
 
 var
     cecProcess,         // cec process
@@ -45,6 +46,8 @@ function init(args) {
         // console.log(err);
     });
     registerEvents(cecProcess);
+
+    return cecProcess;
 }
 
 
@@ -72,7 +75,7 @@ function emitCmd(cmd) {
  */
 function registerEvents(cecProcess) {
     // create new log file
-    var logPath = __dirname + "/logs";
+    var logPath = os.tmpdir();
     var logFile = logPath + "/cec-log.txt";
     try {
         var stats = fs.statSync(logPath);
@@ -104,11 +107,10 @@ function registerEvents(cecProcess) {
             var indexOfAdapter = dataAsString.includes("CECclientregistered");
             if (indexOfAdapter) {
                 console.log("\nCEC Client successfully registered.\n");
-                var initVals = dataAsString.split(",");
-                var cecAdapterVals = initVals[4].split("(");
-                var cecBaseVals = initVals[5].split("(");
-                CEC_ADAPTER.device = cecAdapterVals[1].substr(4);
-                CEC_ADAPTER.lAddr = cecAdapterVals[2][0];
+                var adapterRegExp = /logicaladdress\(es\)=(\w+)\((\d+)\)/g;
+                var cecAdapterVals = adapterRegExp.exec(dataAsString);
+                CEC_ADAPTER.device = cecAdapterVals[1];
+                CEC_ADAPTER.lAddr = cecAdapterVals[2];
                 console.log("CEC Adapter Device:\t" + JSON.stringify(CEC_ADAPTER, null, "  "));
                 initialized = true;
                 // run after-init functions here:

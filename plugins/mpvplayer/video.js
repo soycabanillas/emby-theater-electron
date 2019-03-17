@@ -1,6 +1,13 @@
-﻿define(['loading', 'pluginManager', 'scrollHelper', 'appSettings', 'emby-select', 'emby-checkbox', 'emby-input'], function (loading, pluginManager, scrollHelper, appSettings) {
+﻿define(['loading', 'pluginManager', 'appSettings', 'emby-select', 'emby-checkbox', 'emby-input', 'emby-scroller'], function (loading, pluginManager, appSettings) {
+
+    function onSubmit(e) {
+        e.preventDefault();
+        return false;
+    }
 
     return function (view, params) {
+
+        view.querySelector('form').addEventListener('submit', onSubmit);
 
         view.addEventListener('viewbeforeshow', function (e) {
 
@@ -11,7 +18,6 @@
             loading.hide();
 
             if (!isRestored) {
-                scrollHelper.centerFocus.on(view.querySelector('.smoothScrollY'), false);
 
                 renderSettings();
             }
@@ -23,7 +29,9 @@
 
             appSettings.set('mpv-hwdec', view.querySelector('.selectHwaMode').value);
             appSettings.set('mpv-outputlevels', view.querySelector('.selectNominalRange').value);
-            appSettings.set('mpv-displaysync', view.querySelector('.selectRefreshRateMode').value);
+            appSettings.set('mpv-displaysync', view.querySelector('.chkRefreshRateMode').checked);
+            appSettings.set('mpv-displaysync_override', view.querySelector('.txtUserRefreshRate').value);
+            appSettings.set('mpv-videosync', view.querySelector('.chkVideoSync').checked);
             appSettings.set('mpv-deinterlace', view.querySelector('.selectDeinterlace').value);
             appSettings.set('mpv-scale', view.querySelector('.selectScale').value);
             appSettings.set('mpv-cscale', view.querySelector('.selectCScale').value);
@@ -39,18 +47,22 @@
             appSettings.set('mpv-correctdownscaling', view.querySelector('.chkCorrectDownscaling').checked);
             appSettings.set('mpv-sigmoidupscaling', view.querySelector('.chkSigmoid').checked);
             appSettings.set('mpv-deband', view.querySelector('.chkDeband').checked);
+            appSettings.set('mpv-videostereomode', view.querySelector('.selectVideoStereoMode').value);
         }
 
         function renderSettings() {
 
             view.querySelector('.selectHwaMode').value = appSettings.get('mpv-hwdec') || '';
             view.querySelector('.selectNominalRange').value = appSettings.get('mpv-outputlevels') || '';
-            view.querySelector('.selectRefreshRateMode').value = appSettings.get('mpv-displaysync') || '';
+            view.querySelector('.chkRefreshRateMode').checked = appSettings.get('mpv-displaysync') === 'true';
+            view.querySelector('.txtUserRefreshRate').value = appSettings.get('mpv-displaysync_override') || '';
+            view.querySelector('.chkVideoSync').checked = appSettings.get('mpv-videosync') === 'true';
             view.querySelector('.selectDeinterlace').value = appSettings.get('mpv-deinterlace') || '';
             view.querySelector('.selectScale').value = appSettings.get('mpv-scale') || '';
             view.querySelector('.selectCScale').value = appSettings.get('mpv-cscale') || '';
             view.querySelector('.selectDScale').value = appSettings.get('mpv-dscale') || '';
             view.querySelector('.selectTScale').value = appSettings.get('mpv-tscale') || '';
+            view.querySelector('.selectVideoStereoMode').value = appSettings.get('mpv-videostereomode') || '';
             view.querySelector('.selectDitherDepth').value = appSettings.get('mpv-ditherdepth') || '';
 
             view.querySelector('.txtDefaultAudioDelay').value = appSettings.get('mpv-audiodelay') || '0';
